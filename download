@@ -1,0 +1,13 @@
+# Your own settings (created on first start)
+config.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Your own background images (keep the folder and its note)
+backgrounds/*
+!backgrounds/put custom backgrounds here.txt
+
+# Preview image used for testing
+demo_background.jpg

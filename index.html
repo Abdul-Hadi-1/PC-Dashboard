@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PC Stats Dashboard</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --nv: 118, 185, 0;          /* NVIDIA green */
+    --amd: 220, 24, 40;         /* AMD red */
+    --accent: #8fe3ff;          /* replaced by a colour taken from the game's artwork */
+    --accent-ink: #0b1a22;
+    --glass: rgba(9, 13, 19, 0.55);
+    --line: rgba(255, 255, 255, 0.10);
+    --ink: #f4f7fb;
+    --soft: rgba(244, 247, 251, 0.78);
+    --faint: rgba(244, 247, 251, 0.45);
+    --warm: #ffd48a;
+    --alarm: #ffb547;
+    --stop: #ff6b5e;
+    --num: "Bahnschrift", "Barlow Semi Condensed", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    --text: "Bahnschrift", "Barlow", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: #05070a; color: var(--ink); overflow: hidden;
+    font-family: var(--text); -webkit-font-smoothing: antialiased; user-select: none;
+    touch-action: none; cursor: none; }
+  body.pointer { cursor: default; }
+  button { font-family: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .hidden { display: none !important; }
+
+  /* ---------- background: the game's artwork (blurred once, not live) ---------- */
+  .fallback { position: fixed; inset: 0;
+    background: radial-gradient(90% 120% at 15% 0%, #1b2a3a 0%, #0b1118 55%, #05070a 100%); }
+  .bg { position: fixed; inset: -24px; background: center / cover no-repeat;
+    filter: blur(2px) saturate(1.2) brightness(0.9); opacity: 0; transition: opacity 1.2s ease; }
+  .bg.on { opacity: 1; }
+  .shade { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 90% at 50% 40%, transparent 45%, rgba(0,0,0,.45) 100%); }
+
+  /* ---------- fixed 1024x600 stage, scaled to fit the screen ---------- */
+  .stage { position: absolute; left: 50%; top: 50%; width: 1024px; height: 600px;
+    transform-origin: center; overflow: hidden; }
+  .track { display: flex; width: 3072px; height: 600px;
+    transition: transform .35s cubic-bezier(.2,.7,.2,1); }
+  .page { position: relative; flex: none; width: 1024px; height: 600px; padding: 18px 20px 32px; }
+
+  .glass { position: relative; overflow: hidden; background: var(--glass); border: 1px solid var(--line);
+    border-radius: 20px; text-shadow: 0 1px 10px rgba(0,0,0,.35); }
+
+  /* ---------- page 1: stats ---------- */
+  .page.stats { display: grid; grid-template-rows: 172px 290px 64px; gap: 12px; }
+  .chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .card { padding: 16px 20px 14px; display: flex; flex-direction: column; }
+  .card .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0%;
+    transition: width .9s cubic-bezier(.2,.7,.2,1); }
+  .gpu .fill { background: linear-gradient(90deg, rgba(var(--nv), .72), rgba(var(--nv), .50)); }
+  .cpu .fill { background: linear-gradient(90deg, rgba(var(--amd), .76), rgba(var(--amd), .52)); }
+  .card .edge { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+  .gpu .edge { background: rgb(var(--nv)); }
+  .cpu .edge { background: rgb(var(--amd)); }
+  .card .glow { position: absolute; inset: 0; border-radius: 20px; border: 2px solid var(--alarm);
+    box-shadow: inset 0 0 24px rgba(255,181,71,.40); opacity: 0; pointer-events: none; }
+  .card.alert .glow { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .card > .chead, .card > .readings, .card > .extras { position: relative; }
+  .chead { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+  .card h2 { font: 600 21px/1.1 var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { margin-left: auto; display: none; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
+    border-radius: 999px; background: var(--alarm); color: #1b1205; font: 600 14px/1 var(--text);
+    text-shadow: none; flex: none; }
+  .card.alert .badge { display: inline-flex; }
+  .readings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 6px; }
+  .big { display: inline-block; font: 700 56px/.95 var(--num); font-variation-settings: "wdth" 85;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .big small { font-size: 24px; font-weight: 600; margin-left: 3px; }
+  .label { font: 400 14px/1.2 var(--text); margin-top: 4px; }
+  .temp.warm { color: var(--warm); }
+  .temp.hot { background: var(--alarm); color: #1b1205; border-radius: 10px; padding: 2px 10px 0;
+    margin-left: -10px; text-shadow: none; }
+  .extras { margin-top: auto; display: flex; gap: 18px; font: 400 14px/1 var(--text); white-space: nowrap; }
+  .extras b { font: 600 14px/1 var(--num); margin-left: 5px; font-variant-numeric: tabular-nums; }
+
+  .panel { padding: 16px 22px 0; }
+  .view { position: relative; z-index: 1; height: 100%; }
+  /* The FPS graph is an SVG shape, not a canvas: it survives the graphics resets games cause. */
+  svg.trace { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 110px;
+    z-index: 0; pointer-events: none; overflow: visible; }
+  #traceLine { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+  #traceLow { fill: none; stroke: rgba(244,247,251,.45); stroke-width: 1.5; stroke-dasharray: 6 6; }
+
+  .game-view { display: grid; grid-template-columns: 270px minmax(0, 1fr); grid-template-rows: auto 1fr;
+    column-gap: 24px; }
+  .ghead { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .ghead h1 { font: 600 28px/1.15 var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0; }
+  .state { flex: none; margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font: 400 15px/1 var(--text); color: var(--soft); }
+  .state b { color: var(--ink); font: 600 15px/1 var(--num); }
+  .state i { width: 9px; height: 9px; border-radius: 50%; background: #5ee08a;
+    box-shadow: 0 0 0 4px rgba(94,224,138,.18); }
+  .state.paused i { background: var(--alarm); box-shadow: 0 0 0 4px rgba(255,181,71,.18); }
+  .state.off i { background: var(--faint); box-shadow: none; }
+  .now { margin-top: 6px; }
+  .fps { font: 700 120px/.86 var(--num); font-variation-settings: "wdth" 75; font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em; }
+  .fps-sub { display: flex; gap: 16px; margin-top: 8px; font: 400 16px/1 var(--text); color: var(--soft); }
+  .fps-sub b { color: var(--ink); font: 600 16px/1 var(--num); margin-right: 4px; }
+  .right { margin-top: 12px; min-width: 0; }
+  .stats4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .stat .v { font: 700 44px/1 var(--num); font-variation-settings: "wdth" 85; font-variant-numeric: tabular-nums; }
+  .stat .l { font: 400 14px/1.2 var(--text); color: var(--soft); margin-top: 5px; }
+  .stat.low .v { color: var(--accent); }
+  .reset-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .caption { font: 400 13px/1.3 var(--text); color: var(--soft); }
+  .btn { height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.2);
+    background: rgba(255,255,255,.1); font: 600 15px/1 var(--text); display: inline-flex; align-items: center;
+    gap: 8px; flex: none; text-shadow: none; }
+  .btn:active { background: rgba(255,255,255,.22); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border: 0; }
+
+  .summary-view { display: flex; flex-direction: column; padding: 4px 2px 18px; }
+  .kicker { font: 400 15px/1 var(--text); color: var(--soft); }
+  .summary-view h1 { margin-top: 6px; font: 600 30px/1.1 var(--text); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .sgrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 22px; }
+  .sgrid .v { font: 700 40px/1 var(--num); font-variation-settings: "wdth" 85; font-variant-numeric: tabular-nums;
+    white-space: nowrap; }
+  .sgrid .v small { font-size: 20px; font-weight: 600; margin-left: 3px; }
+  .sgrid .v.accent { color: var(--accent); }
+  .sgrid .l { font: 400 14px/1.2 var(--text); color: var(--soft); margin-top: 6px; }
+  .sfoot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+  .idle-view { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto 1fr;
+    column-gap: 32px; padding-bottom: 18px; }
+  .idle-left, .idle-right { align-self: end; min-width: 0; }
+  .clock { font: 700 112px/.86 var(--num); font-variation-settings: "wdth" 75; font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em; }
+  .date { font: 400 17px/1 var(--text); color: var(--soft); margin-top: 12px; }
+  .tiles { display: flex; gap: 12px; margin-top: 10px; }
+  .tile { position: relative; width: 120px; height: 180px; flex: none; padding: 0; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.18); overflow: hidden; background: #1f2c3a center / cover no-repeat;
+    text-align: left; }
+  .tile:nth-child(2) { background-color: #2a2235; }
+  .tile:nth-child(3) { background-color: #33281f; }
+  .tile:nth-child(4) { background-color: #1e3329; }
+  .tile:active { transform: scale(.97); }
+  .tile span { position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 10px 10px;
+    background: linear-gradient(180deg, transparent, rgba(0,0,0,.85)); font: 600 14px/1.2 var(--text); }
+  .note { font: 400 17px/1.4 var(--text); color: var(--soft); max-width: 44ch; padding-bottom: 8px; }
+  .note b { color: var(--ink); font-weight: 600; }
+
+  .strip { border-radius: 16px; padding: 0 10px; display: flex; align-items: center; gap: 12px; }
+  .art-s { width: 44px; height: 44px; flex: none; border-radius: 8px; background: #232a36 center / cover no-repeat;
+    display: flex; align-items: center; justify-content: center; color: var(--accent); }
+  .has-art > svg, .has-art > span { display: none; }
+  .st { min-width: 0; flex: 1; }
+  .st .t, .st .a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .st .t { font: 600 16px/1.2 var(--text); }
+  .st .a { font: 400 14px/1.2 var(--text); color: var(--soft); margin-top: 2px; }
+  .ib { width: 44px; height: 44px; flex: none; border: 0; border-radius: 50%; background: transparent;
+    display: flex; align-items: center; justify-content: center; }
+  .ib:active { background: rgba(255,255,255,.14); }
+  .ib:disabled, .cb:disabled { opacity: .35; }
+  .ib.play { width: 48px; height: 48px; background: var(--accent); color: var(--accent-ink); }
+  .ring { border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); }
+  .ring.muted, .micbtn.muted { background: var(--stop); border-color: var(--stop); color: #1b0605; }
+  .vline { width: 1px; height: 30px; background: rgba(255,255,255,.18); margin: 0 4px; flex: none; }
+
+  /* ---------- page 2: music ---------- */
+  .mpanel { height: 100%; padding: 28px 34px; display: grid; grid-template-columns: 340px minmax(0, 1fr);
+    column-gap: 40px; align-items: center; }
+  .art-l { width: 340px; height: 340px; border-radius: 16px; background: #232a36 center / cover no-repeat;
+    border: 1px solid rgba(255,255,255,.12); display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 12px; color: var(--accent); }
+  .art-l span { font: 400 15px/1 var(--text); color: var(--soft); }
+  .minfo { min-width: 0; }
+  .msrc { font: 400 15px/1 var(--text); color: var(--soft); }
+  .mtitle { margin-top: 10px; font: 700 44px/1.05 var(--text); display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden; }
+  .martist { font: 400 22px/1.2 var(--text); color: var(--soft); margin-top: 6px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .prog { margin-top: 30px; }
+  .bar { position: relative; height: 6px; border-radius: 3px; background: rgba(255,255,255,.18); }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--accent); }
+  .times { display: flex; justify-content: space-between; font: 400 14px/1 var(--num); color: var(--soft);
+    margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .mctl { display: flex; align-items: center; gap: 22px; margin-top: 22px; }
+  .cb { width: 64px; height: 64px; flex: none; border-radius: 50%; border: 1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.08); display: flex; align-items: center; justify-content: center; }
+  .cb:active { background: rgba(255,255,255,.2); }
+  .cb.play { width: 84px; height: 84px; border: 0; background: var(--accent); color: var(--accent-ink); }
+  .mvol { display: flex; align-items: center; gap: 14px; margin-top: 26px; }
+  .pct { width: 48px; text-align: right; font: 600 16px/1 var(--num); font-variant-numeric: tabular-nums; flex: none; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 44px;
+    background: transparent; margin: 0; --p: 50%; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--ink) var(--p), rgba(255,255,255,.18) var(--p)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -8px;
+    border-radius: 50%; background: var(--ink); box-shadow: 0 1px 6px rgba(0,0,0,.4); }
+  input.big-range { height: 64px; }
+  input.big-range::-webkit-slider-runnable-track { height: 14px; border-radius: 7px;
+    background: linear-gradient(90deg, var(--accent) var(--p), rgba(255,255,255,.16) var(--p)); }
+  input.big-range::-webkit-slider-thumb { width: 40px; height: 40px; margin-top: -13px; }
+
+  /* ---------- page 3: sound and mic ---------- */
+  .page.sound { display: grid; grid-template-rows: 222px minmax(0, 1fr); gap: 12px; }
+  .vpanel { padding: 22px 28px; display: flex; flex-direction: column; }
+  .vtop { display: flex; align-items: baseline; gap: 16px; min-width: 0; }
+  .vtop h2, .ptitle { font: 600 20px/1 var(--text); }
+  .vtop .soft { font: 400 15px/1 var(--text); color: var(--soft); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0; }
+  .vnum { margin-left: auto; font: 700 72px/.9 var(--num); font-variation-settings: "wdth" 85;
+    font-variant-numeric: tabular-nums; flex: none; }
+  .vnum small { font-size: 30px; font-weight: 600; margin-left: 3px; }
+  .vrow { margin-top: auto; display: flex; align-items: center; gap: 20px; }
+  .mute { height: 64px; padding: 0 22px; flex: none; border-radius: 16px; border: 1px solid rgba(255,255,255,.2);
+    background: rgba(255,255,255,.08); font: 600 17px/1 var(--text); display: flex; align-items: center; gap: 10px; }
+  .mute.on { background: var(--alarm); border-color: var(--alarm); color: #1b1205; }
+  .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-height: 0; }
+  .opanel { padding: 22px 24px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .outs { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+  .out { flex: 1 1 0; max-height: 84px; min-height: 0; padding: 0 20px; border-radius: 16px;
+    border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); display: flex; align-items: center;
+    gap: 14px; text-align: left; }
+  .out .n { flex: 1; min-width: 0; }
+  .out .n b, .out .n span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .out .n b { font: 600 19px/1.2 var(--text); }
+  .out .n span { font: 400 13px/1.2 var(--text); color: var(--soft); margin-top: 2px; }
+  .out .ok { display: none; color: var(--accent); }
+  .out.on { border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .out.on .ok { display: block; }
+  .mhead { display: flex; align-items: center; gap: 10px; }
+  .mhead .soft { margin-left: auto; display: flex; align-items: center; gap: 8px; font: 400 15px/1 var(--text);
+    color: var(--soft); }
+  .mhead i { width: 9px; height: 9px; border-radius: 50%; background: #5ee08a;
+    box-shadow: 0 0 0 4px rgba(94,224,138,.18); }
+  .mhead.muted i { background: var(--stop); box-shadow: 0 0 0 4px rgba(255,107,94,.2); }
+  .micbtn { flex: 1; border-radius: 18px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  .micbtn b { font: 600 22px/1 var(--text); }
+  .micbtn span { font: 400 14px/1.2 var(--text); color: inherit; opacity: .8; }
+  .empty { font: 400 16px/1.4 var(--text); color: var(--soft); }
+
+  /* ---------- page dots, messages ---------- */
+  .dots { position: absolute; left: 0; right: 0; bottom: 0; height: 32px; display: flex; justify-content: center;
+    align-items: center; z-index: 3; }
+  .dots button { width: 36px; height: 32px; padding: 0; border: 0; background: transparent; display: flex;
+    align-items: center; justify-content: center; }
+  .dots i { display: block; width: 6px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.38);
+    transition: width .25s, background .25s; }
+  .dots button[aria-current="true"] i { width: 22px; background: var(--accent); }
+  .toast { position: absolute; left: 50%; top: 14px; transform: translate(-50%, -10px); opacity: 0; z-index: 5;
+    padding: 11px 18px; border-radius: 999px; background: rgba(0,0,0,.85); font: 600 15px/1 var(--text);
+    transition: opacity .2s, transform .2s; pointer-events: none; }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+  .hint { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 6;
+    font: 500 14px/1 var(--text); color: var(--ink); background: rgba(0,0,0,.8); padding: 9px 14px;
+    border-radius: 999px; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .bg, .card .fill, .track, .toast { transition: none; }
+    .card.alert .glow { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="fallback"></div>
+<div class="bg" id="bgA"></div>
+<div class="bg" id="bgB"></div>
+<div class="shade"></div>
+
+<main class="stage" id="stage">
+  <div class="track" id="track">
+
+    <!-- ===================== page 1: stats ===================== -->
+    <section class="page stats" aria-label="Stats">
+      <div class="chips">
+        <article class="card gpu glass" id="gpu">
+          <div class="fill"></div><div class="edge"></div><div class="glow"></div>
+          <div class="chead"><h2 data-k="name">GPU</h2>
+            <span class="badge"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>Running hot</span></div>
+          <div class="readings">
+            <div><div class="big" data-k="usage">–</div><div class="label">Usage</div></div>
+            <div><div class="big temp" data-k="temp">–</div><div class="label">Temperature</div></div>
+          </div>
+          <div class="extras" data-k="extras"></div>
+        </article>
+        <article class="card cpu glass" id="cpu">
+          <div class="fill"></div><div class="edge"></div><div class="glow"></div>
+          <div class="chead"><h2 data-k="name">CPU</h2>
+            <span class="badge"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>Running hot</span></div>
+          <div class="readings">
+            <div><div class="big" data-k="usage">–</div><div class="label">Usage</div></div>
+            <div><div class="big temp" data-k="temp">–</div><div class="label">Temperature</div></div>
+          </div>
+          <div class="extras" data-k="extras"></div>
+        </article>
+      </div>
+
+      <section class="panel glass" id="panel">
+        <svg class="trace" id="trace" viewBox="0 0 1000 110" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="traceFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path id="traceArea" fill="url(#traceFill)" d=""/>
+          <path id="traceLow" vector-effect="non-scaling-stroke" d=""/>
+          <path id="traceLine" vector-effect="non-scaling-stroke" d=""/>
+        </svg>
+
+        <div class="view game-view hidden" id="gameView">
+          <header class="ghead">
+            <h1 id="gameName"></h1>
+            <div class="state" id="state"><i></i><span id="stateText"></span></div>
+          </header>
+          <div class="now">
+            <div class="fps" id="fps">–</div>
+            <div class="fps-sub"><span><b>fps</b></span><span><b id="ft">–</b>ms per frame</span></div>
+          </div>
+          <div class="right">
+            <div class="stats4">
+              <div class="stat"><div class="v" id="sMin">–</div><div class="l">Min</div></div>
+              <div class="stat"><div class="v" id="sAvg">–</div><div class="l">Average</div></div>
+              <div class="stat"><div class="v" id="sMax">–</div><div class="l">Max</div></div>
+              <div class="stat low"><div class="v" id="sLow">–</div><div class="l">1% low</div></div>
+            </div>
+            <div class="reset-row">
+              <span class="caption" id="window">Since you last reset</span>
+              <button type="button" class="btn" id="resetBtn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                Reset stats
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="view summary-view hidden" id="summaryView">
+          <div class="kicker">Session summary</div>
+          <h1 id="sumName"></h1>
+          <div class="sgrid">
+            <div><div class="v" id="sumTime">–</div><div class="l">Play time</div></div>
+            <div><div class="v" id="sumAvg">–</div><div class="l">Average FPS</div></div>
+            <div><div class="v accent" id="sumLow">–</div><div class="l">1% low</div></div>
+            <div><div class="v" id="sumGpu">–</div><div class="l">Hottest GPU</div></div>
+            <div><div class="v" id="sumCpu">–</div><div class="l">Hottest CPU</div></div>
+          </div>
+          <div class="sfoot">
+            <span class="caption">Hides by itself after a minute. Nothing is saved.</span>
+            <button type="button" class="btn primary" id="sumClose">Close summary</button>
+          </div>
+        </div>
+
+        <div class="view idle-view" id="idleView">
+          <header class="ghead" style="grid-column: 1 / -1">
+            <h1 id="idleTitle">Starting…</h1>
+            <div class="state off"><i></i><span id="idleState">Waiting</span></div>
+          </header>
+          <div class="idle-left">
+            <div class="clock" id="clock">--:--</div>
+            <div class="date" id="date"></div>
+          </div>
+          <div class="idle-right">
+            <div id="tilesWrap" class="hidden">
+              <div class="caption" style="font-size: 15px">Jump back in</div>
+              <div class="tiles" id="tiles"></div>
+            </div>
+            <p class="note" id="idleNote"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="strip glass" id="strip">
+        <div class="art-s" id="artS" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div class="st">
+          <div class="t" id="stTitle">Nothing playing</div>
+          <div class="a" id="stArtist">Music from Spotify, YouTube and more shows up here</div>
+        </div>
+        <button type="button" class="ib" data-media="prev" aria-label="Previous track"></button>
+        <button type="button" class="ib play" data-media="toggle" aria-label="Play"></button>
+        <button type="button" class="ib" data-media="next" aria-label="Next track"></button>
+        <span class="vline" aria-hidden="true"></span>
+        <button type="button" class="ib ring" data-mic aria-label="Mute microphone"></button>
+      </section>
+    </section>
+
+    <!-- ===================== page 2: music ===================== -->
+    <section class="page music" aria-label="Music">
+      <div class="mpanel glass">
+        <div class="art-l" id="artL" aria-hidden="true">
+          <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <span>No album art</span>
+        </div>
+        <div class="minfo">
+          <div class="msrc" id="mSrc">Nothing playing</div>
+          <div class="mtitle" id="mTitle">Start music in Spotify or any other app</div>
+          <div class="martist" id="mArtist"></div>
+          <div class="prog" id="mProg">
+            <div class="bar"><i id="mBar"></i></div>
+            <div class="times"><span id="mPos">0:00</span><span id="mDur">0:00</span></div>
+          </div>
+          <div class="mctl">
+            <button type="button" class="cb" data-media="prev" aria-label="Previous track"></button>
+            <button type="button" class="cb play" data-media="toggle" aria-label="Play"></button>
+            <button type="button" class="cb" data-media="next" aria-label="Next track"></button>
+          </div>
+          <div class="mvol">
+            <button type="button" class="ib" data-mute aria-label="Mute sound"></button>
+            <input type="range" min="0" max="100" step="1" value="50" data-volume aria-label="Volume">
+            <span class="pct" data-volpct>–</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== page 3: sound and mic ===================== -->
+    <section class="page sound" aria-label="Sound and mic">
+      <div class="vpanel glass">
+        <div class="vtop">
+          <h2>Volume</h2>
+          <span class="soft" id="outNow"></span>
+          <span class="vnum" id="vNum">–</span>
+        </div>
+        <div class="vrow">
+          <button type="button" class="mute" id="muteBig">
+            <span data-mute-icon></span><span id="muteLabel">Mute</span>
+          </button>
+          <input type="range" class="big-range" min="0" max="100" step="1" value="50" data-volume aria-label="Volume">
+        </div>
+      </div>
+      <div class="two">
+        <div class="opanel glass">
+          <h2 class="ptitle">Sound output</h2>
+          <div class="outs" id="outs"></div>
+        </div>
+        <div class="opanel glass">
+          <div class="mhead" id="micHead">
+            <h2 class="ptitle">Microphone</h2>
+            <span class="soft"><i></i><span id="micState">Checking…</span></span>
+          </div>
+          <button type="button" class="micbtn" id="micBig" data-mic>
+            <span data-mic-icon></span>
+            <b id="micLabel">Mute mic</b>
+            <span>Works in Discord and every other app</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <nav class="dots" aria-label="Pages">
+    <button type="button" aria-label="Stats" aria-current="true"><i></i></button>
+    <button type="button" aria-label="Music"><i></i></button>
+    <button type="button" aria-label="Sound and mic"><i></i></button>
+  </nav>
+  <div class="toast" id="toast" role="status"></div>
+</main>
+
+<div class="hint hidden" id="hint">Tap to fill the screen</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  const stage = $("stage"), track = $("track");
+  let scale = 1, page = 0, last = null;
+
+  // ---------- icons (fixed markup) ----------
+  const svg = (size, body, fill) =>
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${fill ? "currentColor" : "none"}" stroke="${fill ? "none" : "currentColor"}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const ICON = {
+    prev: (s) => svg(s, '<path d="M19 20 9 12l10-8v16Z"/><path d="M5 19V5"/>'),
+    next: (s) => svg(s, '<path d="m5 4 10 8-10 8V4Z"/><path d="M19 5v14"/>'),
+    play: (s) => svg(s, '<path d="M7 4v16l13-8L7 4Z"/>', true),
+    pause: (s) => svg(s, '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>', true),
+    mic: (s) => svg(s, '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>'),
+    micOff: (s) => svg(s, '<path d="M15 9.3V6a3 3 0 0 0-5.7-1.3"/><path d="M9 9v2a3 3 0 0 0 5 2.2"/><path d="M5 11a7 7 0 0 0 11.6 5.3"/><path d="M19 11a7 7 0 0 1-.6 2.8"/><path d="M12 18v3"/><path d="m3 3 18 18"/>'),
+    speaker: (s) => svg(s, '<path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>'),
+    speakerOff: (s) => svg(s, '<path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>'),
+    headphones: (s) => svg(s, '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>'),
+    speakers: (s) => svg(s, '<rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="14" r="4"/><path d="M12 6h.01"/>'),
+    check: (s) => svg(s, '<path d="M20 6 9 17l-5-5"/>'),
+  };
+  function setIcon(el, html) { if (el._icon !== html) { el.innerHTML = html; el._icon = html; } }
+  $$('[data-media="prev"]').forEach((b) => setIcon(b, ICON.prev(b.classList.contains("cb") ? 28 : 22)));
+  $$('[data-media="next"]').forEach((b) => setIcon(b, ICON.next(b.classList.contains("cb") ? 28 : 22)));
+
+  // ---------- helpers ----------
+  const has = (v) => v !== null && v !== undefined && !Number.isNaN(v);
+  const whole = (v) => (has(v) ? Math.round(v).toString() : "–");
+  const withUnit = (v, u) => (has(v) ? `${Math.round(v)}<small>${u}</small>` : "–");
+  function setText(el, v) { v = v == null ? "" : String(v); if (el.textContent !== v) el.textContent = v; }
+  function setHTML(el, v) { if (el._h !== v) { el.innerHTML = v; el._h = v; } }
+  function show(el, on) { el.classList.toggle("hidden", !on); }
+  function playTime(s) {
+    if (!has(s)) return "–";
+    const m = Math.floor(s / 60), h = Math.floor(m / 60);
+    return h ? `${h} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`;
+  }
+  const mmss = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+
+  async function act(path, body = {}) {
+    try {
+      const r = await fetch(path, { method: "POST", body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json", "X-Dashboard": "1" } });
+      return !!(await r.json()).ok;
+    } catch (e) { return false; }
+  }
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast");
+    setText(t, msg);
+    t.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("on"), 1800);
+  }
+
+  // ---------- fit the 1024x600 layout to the screen ----------
+  function fit() {
+    scale = Math.min(innerWidth / 1024, innerHeight / 600);
+    stage.style.transform = `translate(-50%, -50%) scale(${scale})`;
+  }
+  addEventListener("resize", fit);
+
+  // ---------- pages: swipe left and right, or tap the dots ----------
+  const dots = $$(".dots button");
+  function go(p) {
+    page = Math.max(0, Math.min(2, p));
+    track.style.transform = `translateX(${-1024 * page}px)`;
+    dots.forEach((d, i) => d.setAttribute("aria-current", i === page ? "true" : "false"));
+  }
+  dots.forEach((d, i) => d.addEventListener("click", () => go(i)));
+  let sx = null, sy = null, moved = false, onSlider = false;
+  stage.addEventListener("pointerdown", (e) => {
+    sx = e.clientX; sy = e.clientY; moved = false;
+    onSlider = !!e.target.closest("input[type=range]");
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (sx !== null && !onSlider && Math.abs(e.clientX - sx) > 14) moved = true;
+  });
+  stage.addEventListener("pointerup", (e) => {
+    if (sx === null) return;
+    const dx = (e.clientX - sx) / scale, dy = (e.clientY - sy) / scale;
+    if (!onSlider && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.3) go(page + (dx < 0 ? 1 : -1));
+    sx = null;
+  });
+  stage.addEventListener("pointercancel", () => { sx = null; });
+
+  // Windows moves the mouse pointer and focus here when you touch the screen, which pauses
+  // games. Once your finger lifts, hand them back (real mouse clicks are left alone).
+  let refocusTimer = null;
+  document.addEventListener("pointerdown", () => clearTimeout(refocusTimer));
+  document.addEventListener("pointerup", (e) => {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
+    clearTimeout(refocusTimer);
+    refocusTimer = setTimeout(() => act("/api/refocus"), 150);
+  });
+  // A swipe that starts on a button shouldn't also press it.
+  stage.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // ---------- full screen on the first tap; cursor only while the mouse moves ----------
+  const hint = $("hint");
+  const updateHint = () => show(hint, !document.fullscreenElement);
+  document.addEventListener("fullscreenchange", updateHint);
+  document.addEventListener("pointerup", () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  });
+  let pointerTimer;
+  document.addEventListener("mousemove", () => {
+    document.body.classList.add("pointer");
+    clearTimeout(pointerTimer);
+    pointerTimer = setTimeout(() => document.body.classList.remove("pointer"), 2500);
+  });
+  updateHint();
+
+  // ---------- background crossfade + game-matched accent colour ----------
+  const layers = [$("bgA"), $("bgB")];
+  let front = 0, currentBg = null;
+  function setBackground(url) {
+    if (url === currentBg) return;
+    currentBg = url;
+    if (!url) { layers.forEach((l) => l.classList.remove("on")); setAccent(null); return; }
+    const img = new Image();
+    img.onload = () => {
+      if (currentBg !== url) return;
+      const next = layers[1 - front];
+      next.style.backgroundImage = `url("${url}")`;
+      next.classList.add("on");
+      layers[front].classList.remove("on");
+      front = 1 - front;
+      setAccent(accentHue(img));
+    };
+    img.src = url;
+  }
+  function accentHue(img) {
+    try {
+      const c = document.createElement("canvas");
+      c.width = c.height = 32;
+      const x = c.getContext("2d", { willReadFrequently: true });
+      x.drawImage(img, 0, 0, 32, 32);
+      const d = x.getImageData(0, 0, 32, 32).data;
+      let hx = 0, hy = 0, w = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b), chroma = max - min, l = (max + min) / 2;
+        if (chroma < 0.08) continue;
+        const s = chroma / (1 - Math.abs(2 * l - 1) || 1);
+        let h = max === r ? ((g - b) / chroma) % 6 : max === g ? (b - r) / chroma + 2 : (r - g) / chroma + 4;
+        h *= 60;
+        const wt = s * Math.max(0, 1 - Math.abs(l - 0.5) * 1.6);
+        hx += Math.cos(h * Math.PI / 180) * wt;
+        hy += Math.sin(h * Math.PI / 180) * wt;
+        w += wt;
+      }
+      if (w < 2) return null;
+      return (Math.atan2(hy, hx) * 180 / Math.PI + 360) % 360;
+    } catch (e) { return null; }
+  }
+  function setAccent(h) {
+    const st = document.documentElement.style;
+    if (h == null) { st.removeProperty("--accent"); st.removeProperty("--accent-ink"); }
+    else {
+      st.setProperty("--accent", `hsl(${Math.round(h)} 85% 78%)`);
+      st.setProperty("--accent-ink", `hsl(${Math.round(h)} 60% 10%)`);
+    }
+    draw();
+  }
+
+  // ---------- GPU / CPU cards ----------
+  function renderChip(el, d, warm, hot) {
+    const q = (k) => el.querySelector(`[data-k="${k}"]`);
+    setText(q("name"), d.name || "");
+    setHTML(q("usage"), withUnit(d.usage, "%"));
+    const t = q("temp");
+    setHTML(t, withUnit(d.temp, "°C"));
+    const isHot = has(d.temp) && d.temp >= hot;
+    t.classList.toggle("warm", has(d.temp) && d.temp >= warm && !isHot);
+    t.classList.toggle("hot", isHot);
+    el.classList.toggle("alert", isHot);
+    el.querySelector(".fill").style.width = has(d.usage) ? `${Math.max(0, Math.min(100, d.usage))}%` : "0%";
+    const ex = q("extras");
+    const key = JSON.stringify(d.extras || []);
+    if (ex._k !== key) {
+      ex._k = key;
+      ex.replaceChildren(...(d.extras || []).map((x) => {
+        const s = document.createElement("span");
+        s.textContent = x.label;
+        const b = document.createElement("b");
+        b.textContent = `${x.value} ${x.unit}`;
+        s.append(b);
+        return s;
+      }));
+    }
+  }
+
+  // ---------- FPS trace (an SVG shape the browser can always redraw) ----------
+  const trace = $("trace"), tLine = $("traceLine"), tArea = $("traceArea"), tLow = $("traceLow");
+  const history = [], HISTORY = 120, TW = 1000, TH = 110;
+  let lowLine = null;
+  function draw() {
+    if (history.length < 2) {
+      tLine.setAttribute("d", ""); tArea.setAttribute("d", ""); tLow.setAttribute("d", "");
+      return;
+    }
+    const top = Math.max(30, ...history, has(lowLine) ? lowLine : 0) * 1.18;
+    const step = TW / (HISTORY - 1), x0 = TW - (history.length - 1) * step;
+    const y = (v) => (TH - (v / top) * TH * 0.92).toFixed(1);
+    const line = "M" + history.map((v, i) => `${(x0 + i * step).toFixed(1)},${y(v)}`).join(" L");
+    tLine.setAttribute("d", line);
+    tArea.setAttribute("d", `${line} L${TW},${TH} L${x0.toFixed(1)},${TH} Z`);
+    tLow.setAttribute("d", has(lowLine) ? `M0,${y(lowLine)} L${TW},${y(lowLine)}` : "");
+  }
+
+  // ---------- the panel: game / summary / idle ----------
+  let summaryClosed = null, summarySeen = {};
+  $("sumClose").addEventListener("click", () => { if (last && last.summary) summaryClosed = last.summary.id; renderPanel(last); });
+  $("resetBtn").addEventListener("click", async () => {
+    toast((await act("/api/reset")) ? "Stats reset" : "Couldn't press your reset key");
+  });
+
+  function view(name) {
+    show($("gameView"), name === "game");
+    show($("summaryView"), name === "summary");
+    show($("idleView"), name === "idle");
+    trace.style.display = name === "game" ? "" : "none";
+  }
+
+  function renderPanel(d) {
+    const g = d.game, s = d.summary;
+    if (g) return renderGame(g);
+    history.length = 0; lowLine = null;
+    if (s && s.id !== summaryClosed) {
+      summarySeen[s.id] = summarySeen[s.id] || Date.now();
+      if (Date.now() - summarySeen[s.id] < 60000) return renderSummary(s);
+    }
+    renderIdle(d);
+  }
+
+  function renderGame(g) {
+    view("game");
+    setText($("gameName"), g.name);
+    const st = $("state");
+    st.className = `state ${g.active ? "" : "paused"}`;
+    if (!g.active) setText($("stateText"), "Paused");
+    else if (has(g.session_s) && g.session_s >= 60) setHTML($("stateText"), `Playing for <b>${playTime(g.session_s)}</b>`);
+    else setText($("stateText"), "Just started");
+    setText($("fps"), g.active ? whole(g.fps) : "0");
+    setText($("ft"), g.active && has(g.frametime) ? g.frametime.toFixed(1) : "–");
+    setText($("sMin"), whole(g.min));
+    setText($("sAvg"), whole(g.avg));
+    setText($("sMax"), whole(g.max));
+    setText($("sLow"), whole(g.low1));
+    setText($("window"), g.stats === "rolling" ? "Last 2 minutes. Tick Afterburner's framerate stats for 1% low." : "Since you last reset");
+    lowLine = Number.isFinite(g.low1) ? g.low1 : null;
+    history.push(g.active && Number.isFinite(g.fps) ? g.fps : 0);
+    if (history.length > HISTORY) history.shift();
+    draw();
+  }
+
+  function renderSummary(s) {
+    view("summary");
+    setText($("sumName"), s.name);
+    const m = Math.floor((s.duration_s || 0) / 60), h = Math.floor(m / 60);
+    setHTML($("sumTime"), h ? `${h} h ${String(m % 60).padStart(2, "0")}<small>min</small>` : `${m}<small>min</small>`);
+    setText($("sumAvg"), whole(s.avg));
+    setText($("sumLow"), whole(s.low1));
+    setHTML($("sumGpu"), withUnit(s.gpu_peak, "°C"));
+    setHTML($("sumCpu"), withUnit(s.cpu_peak, "°C"));
+  }
+
+  function renderIdle(d) {
+    view("idle");
+    if (!d.sources.rivatuner) {
+      setText($("idleTitle"), "RivaTuner isn't running");
+      setText($("idleState"), "No FPS data");
+      setHTML($("idleNote"), "Start <b>RivaTuner Statistics Server</b> so the dashboard can see your games and FPS.");
+      show($("idleNote"), true); show($("tilesWrap"), false);
+      return;
+    }
+    setText($("idleTitle"), "No game running");
+    setText($("idleState"), "Idle");
+    const recent = d.recent || [];
+    show($("tilesWrap"), recent.length > 0);
+    show($("idleNote"), recent.length === 0);
+    if (!recent.length) setText($("idleNote"), "Start a game and its FPS and artwork will show up here.");
+    const key = JSON.stringify(recent);
+    const tiles = $("tiles");
+    if (tiles._k !== key) {
+      tiles._k = key;
+      tiles.replaceChildren(...recent.map((r) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "tile";
+        b.setAttribute("aria-label", `Play ${r.name}`);
+        if (r.art) b.style.backgroundImage = `url("${r.art}")`;
+        const s = document.createElement("span");
+        s.textContent = r.name;
+        b.append(s);
+        b.addEventListener("click", async () => {
+          toast((await act("/api/launch", { appid: r.appid })) ? `Starting ${r.name}` : "Couldn't start it from here");
+        });
+        return b;
+      }));
+    }
+  }
+
+  // ---------- music ----------
+  let media = { available: false }, mediaAt = 0, playingOverride = null;
+  $$("[data-media]").forEach((b) => b.addEventListener("click", async () => {
+    const action = b.dataset.media;
+    if (action === "toggle") { playingOverride = { v: !media.playing, until: Date.now() + 1500 }; renderMedia(); }
+    if (!(await act("/api/media", { action }))) toast("That app didn't respond");
+  }));
+
+  function renderMedia() {
+    const m = media, on = !!(m.available && m.title);
+    let playing = !!m.playing;
+    if (playingOverride && Date.now() < playingOverride.until) playing = playingOverride.v;
+    setText($("stTitle"), on ? m.title : "Nothing playing");
+    const who = on ? [m.artist, m.app ? `on ${m.app}` : ""].filter(Boolean).join(", ") : "";
+    setText($("stArtist"), on ? (who.charAt(0).toUpperCase() + who.slice(1)) : (m.available ? "Music from Spotify, YouTube and more shows up here" : "Music controls need the add-on (run Start Dashboard again)"));
+    setText($("mSrc"), on ? (m.app ? `Playing on ${m.app}` : "Now playing") : "Nothing playing");
+    setText($("mTitle"), on ? m.title : "Start music in Spotify or any other app");
+    setText($("mArtist"), on ? m.artist : "");
+    for (const [el] of [[$("artS")], [$("artL")]]) {
+      const url = on && m.art ? `url("${m.art}")` : "";
+      if (el._art !== url) { el._art = url; el.style.backgroundImage = url; el.classList.toggle("has-art", !!url); }
+    }
+    $$('[data-media="toggle"]').forEach((b) => {
+      setIcon(b, (playing ? ICON.pause : ICON.play)(b.classList.contains("cb") ? 34 : 20));
+      b.setAttribute("aria-label", playing ? "Pause" : "Play");
+    });
+    $$("[data-media]").forEach((b) => { b.disabled = !on; });
+    const hasTime = on && has(m.duration_s) && m.duration_s > 0;
+    show($("mProg"), hasTime);
+    if (hasTime) {
+      let pos = m.position_s || 0;
+      if (playing) pos += (Date.now() - mediaAt) / 1000;
+      pos = Math.min(pos, m.duration_s);
+      $("mBar").style.width = `${(pos / m.duration_s) * 100}%`;
+      setText($("mPos"), mmss(pos));
+      setText($("mDur"), mmss(m.duration_s));
+    }
+  }
+
+  // ---------- sound and mic ----------
+  let audio = { available: false }, volumeHeld = 0, micHeld = null, muteHeld = null, outHeld = null;
+  const sliders = $$("[data-volume]");
+  let volTimer = null, volPending = null;
+  function sendVolume() {
+    volTimer = null;
+    if (volPending == null) return;
+    act("/api/volume", { level: volPending });
+    volPending = null;
+  }
+  sliders.forEach((s) => s.addEventListener("input", () => {
+    const v = Number(s.value);
+    volumeHeld = Date.now() + 1500;
+    audio.volume = v;
+    renderVolume();
+    volPending = v;
+    if (!volTimer) volTimer = setTimeout(sendVolume, 120);
+  }));
+  $$("[data-mute], #muteBig").forEach((b) => b.addEventListener("click", () => {
+    if (!audio.available) return;
+    const next = !audio.muted;
+    audio.muted = next;
+    muteHeld = { v: next, until: Date.now() + 1500 };
+    renderVolume();
+    act("/api/volume", { muted: next });
+  }));
+  $$("[data-mic]").forEach((b) => b.addEventListener("click", async () => {
+    if (!audio.available || !audio.mic) return;
+    const next = !audio.mic_muted;
+    audio.mic_muted = next;
+    micHeld = { v: next, until: Date.now() + 1500 };
+    renderMic();
+    toast(next ? "Mic muted" : "Mic on");
+    act("/api/mic", { muted: next });
+  }));
+
+  function renderVolume() {
+    const a = audio, ok = a.available && has(a.volume);
+    sliders.forEach((s) => {
+      s.disabled = !ok;
+      if (ok && document.activeElement !== s) s.value = a.volume;
+      s.style.setProperty("--p", `${ok ? a.volume : 0}%`);
+    });
+    $$("[data-volpct]").forEach((el) => setText(el, ok ? `${a.volume}%` : "–"));
+    setHTML($("vNum"), ok ? `${a.volume}<small>%</small>` : "–");
+    const muted = !!a.muted;
+    $$("[data-mute]").forEach((b) => { setIcon(b, (muted ? ICON.speakerOff : ICON.speaker)(22)); b.setAttribute("aria-label", muted ? "Unmute sound" : "Mute sound"); });
+    $$("[data-mute-icon]").forEach((el) => setIcon(el, (muted ? ICON.speakerOff : ICON.speaker)(24)));
+    $("muteBig").classList.toggle("on", muted);
+    setText($("muteLabel"), muted ? "Muted" : "Mute");
+    setText($("outNow"), !a.available ? "Sound controls need the add-on (run Start Dashboard again)" : a.output_name ? `Playing through ${a.output_name.toLowerCase()}` : "");
+  }
+
+  function renderMic() {
+    const a = audio, ok = a.available && a.mic, muted = !!a.mic_muted;
+    $$("[data-mic]").forEach((b) => {
+      b.disabled = !ok;
+      b.classList.toggle("muted", ok && muted);
+      b.setAttribute("aria-pressed", ok && muted ? "true" : "false");
+      b.setAttribute("aria-label", muted ? "Unmute microphone" : "Mute microphone");
+    });
+    $$("[data-mic]").forEach((b) => { if (b.classList.contains("ib")) setIcon(b, (muted ? ICON.micOff : ICON.mic)(20)); });
+    $$("[data-mic-icon]").forEach((el) => setIcon(el, (muted ? ICON.micOff : ICON.mic)(46)));
+    setText($("micLabel"), muted ? "Unmute mic" : "Mute mic");
+    $("micHead").classList.toggle("muted", ok && muted);
+    setText($("micState"), !a.available ? "Needs the add-on" : !a.mic ? "No microphone found" : muted ? "Your mic is muted" : "Your mic is on");
+  }
+
+  function renderOutputs() {
+    const outs = $("outs"), list = audio.outputs || [];
+    const key = JSON.stringify(list.map((o) => [o.id, o.name, o.detail, o.active || (outHeld && outHeld.v === o.id)]));
+    if (outs._k === key) return;
+    outs._k = key;
+    if (!audio.available || !list.length) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = audio.available ? "No sound outputs found." : "Sound controls need the add-on. Run Start Dashboard again to install it.";
+      outs.replaceChildren(p);
+      return;
+    }
+    outs.replaceChildren(...list.map((o) => {
+      const on = outHeld && Date.now() < outHeld.until ? outHeld.v === o.id : o.active;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `out${on ? " on" : ""}`;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.innerHTML = (o.kind === "headphones" ? ICON.headphones : ICON.speakers)(30);
+      const n = document.createElement("span");
+      n.className = "n";
+      const t = document.createElement("b"); t.textContent = o.name;
+      const sub = document.createElement("span"); sub.textContent = o.detail || "";
+      n.append(t, sub);
+      const ok = document.createElement("span"); ok.className = "ok"; ok.innerHTML = ICON.check(22);
+      b.append(n, ok);
+      b.addEventListener("click", () => {
+        outHeld = { v: o.id, until: Date.now() + 2500 };
+        renderOutputs();
+        act("/api/output", { id: o.id });
+      });
+      return b;
+    }));
+  }
+
+  function applyAudio(a) {
+    const prev = audio;
+    audio = a || { available: false };
+    if (Date.now() < volumeHeld && has(prev.volume)) audio.volume = prev.volume;
+    if (muteHeld && Date.now() < muteHeld.until) audio.muted = muteHeld.v;
+    if (micHeld && Date.now() < micHeld.until) audio.mic_muted = micHeld.v;
+    renderVolume(); renderMic(); renderOutputs();
+  }
+
+  // ---------- one update ----------
+  function render(d) {
+    if (!d.ok) return;
+    last = d;
+    renderChip($("gpu"), d.gpu, d.temp_warm, d.temp_hot);
+    renderChip($("cpu"), d.cpu, d.temp_warm, d.temp_hot);
+    renderPanel(d);
+    media = d.media || { available: false };
+    mediaAt = Date.now();
+    renderMedia();
+    applyAudio(d.audio);
+    setBackground(d.bg || null);
+    interval = d.refresh_ms || 500;
+  }
+
+  // ---------- clock for the idle screen ----------
+  function tick() {
+    const t = new Date();
+    setText($("clock"), t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }));
+    setText($("date"), t.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }));
+  }
+  setInterval(tick, 5000); tick();
+
+  // ---------- polling ----------
+  let interval = 500, failures = 0;
+  async function poll() {
+    try {
+      const r = await fetch("/api/stats", { cache: "no-store" });
+      render(await r.json());
+      failures = 0;
+    } catch (e) {
+      failures++;
+      if (failures === 5) {
+        view("idle");
+        setText($("idleTitle"), "Dashboard app isn't running");
+        setText($("idleState"), "Stopped");
+        setHTML($("idleNote"), "Start it again with <b>Start Dashboard</b> in the PC Stats Dashboard folder.");
+        show($("idleNote"), true); show($("tilesWrap"), false);
+      }
+      if (failures > 60) { window.close(); }  // the app has gone: don't leave a stray window
+    } finally {
+      setTimeout(poll, interval);
+    }
+  }
+
+  fit();
+  poll();
+})();
+</script>
+</body>
+</html>

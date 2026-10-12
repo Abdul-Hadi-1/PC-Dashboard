@@ -1,0 +1,93 @@
+# Builds "PC Stats Dashboard.exe" on GitHub's own Windows machines whenever a release
+# is published, and attaches the zip to that release. Each zip also gets a signed
+# record (attestation) proving it was built from this repository's code.
+#
+# To try a build without publishing: Actions tab > Build release > Run workflow.
+
+name: Build release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write       # attach the zip to the release
+  id-token: write       # sign the build record
+  attestations: write   # publish the build record
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the add-ons and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build the app
+        run: >
+          pyinstaller --noconfirm --clean --windowed
+          --name "PC Stats Dashboard"
+          --icon assets/icon.ico
+          --add-data "web;web"
+          --collect-all winrt
+          --hidden-import winrt.runtime --hidden-import winrt.system
+          --hidden-import winrt.windows.foundation
+          --hidden-import winrt.windows.foundation.collections
+          --hidden-import winrt.windows.media
+          --hidden-import winrt.windows.media.control
+          --hidden-import winrt.windows.storage
+          --hidden-import winrt.windows.storage.streams
+          --hidden-import pystray._win32
+          --hidden-import dash_media --hidden-import dash_audio
+          --hidden-import dash_steam --hidden-import dash_tray
+          dashboard.py
+
+      - name: Check the app starts and every part loads
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/PC Stats Dashboard/PC Stats Dashboard.exe" `
+                             -ArgumentList "--self-test", "self-test.txt" -Wait -PassThru
+          Get-Content self-test.txt
+          if ($p.ExitCode -ne 0) { throw "The self-test failed, so nothing was published." }
+
+      - name: Package it
+        id: package
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          if (-not $tag) { $tag = "test-build" }
+          $out = "dist/PC Stats Dashboard"
+          New-Item -ItemType Directory -Force "$out/backgrounds" | Out-Null
+          Copy-Item "backgrounds/put custom backgrounds here.txt" "$out/backgrounds/"
+          Copy-Item README.md, LICENSE "$out/"
+          $zip = "PC-Stats-Dashboard-$tag.zip"
+          Compress-Archive -Path $out -DestinationPath $zip
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Record where the download came from
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.package.outputs.zip }}
+
+      - name: Attach it to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.package.outputs.zip }}" --clobber
+
+      - name: Keep the test build (manual runs only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PC-Stats-Dashboard-test-build
+          path: ${{ steps.package.outputs.zip }}

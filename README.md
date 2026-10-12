@@ -39,31 +39,38 @@ It's built for a 1024×600 screen and scales to fit any size.
 ## Requirements
 
 - Windows 10 or 11
-- [Python](https://www.python.org/downloads/) 3.10 or newer (or run `winget install Python.Python.3.13`)
 - [MSI Afterburner](https://www.msi.com/Landing/afterburner/graphics-cards) with RivaTuner Statistics Server, running
 - Microsoft Edge (built into Windows) or Google Chrome
 - Optional: [HWiNFO64](https://www.hwinfo.com/) with Shared Memory Support, for CPU temperatures Afterburner can't read
 - Optional: Steam, for game names, artwork and recently played games
 
-## Setup
+## Download and run
 
-1. **Download** this repository (Code → Download ZIP) and extract it somewhere permanent.
-2. **Turn on the readings in Afterburner.** In MSI Afterburner → Settings → Monitoring, tick:
+1. **Download** the latest `PC-Stats-Dashboard` zip from the [Releases page](../../releases/latest).
+2. **Extract** it somewhere permanent, such as your Documents folder. Avoid Program Files, because the app saves its settings next to itself.
+3. **Run `PC Stats Dashboard.exe`.** Because the app is new and not code-signed, Windows may show "Windows protected your PC". Click **More info → Run anyway**.
+4. **Tap the small screen once** to make the dashboard fill it. It opens on your smallest screen that isn't the main one.
+
+Then finish the one-time setup below.
+
+### One-time setup
+
+1. **Turn on the readings in Afterburner.** In MSI Afterburner → Settings → Monitoring, tick:
    GPU usage, GPU temperature, Core clock, Power, Memory usage, CPU usage, CPU temperature, CPU clock, RAM usage, Framerate, Framerate Min, Framerate Avg, Framerate Max and Framerate 1% Low.
    They don't need "Show in On-Screen Display".
-3. **Set a reset key in RivaTuner.** In RivaTuner → Setup → Plugins, enable HotkeyHandler and set a key for **Begin recording**. Pressing it again later resets Min, Max and 1% low.
-4. **Double-click `Start Dashboard.bat`.** The first start installs the music, sound and tray add-ons, which takes about a minute and only happens once. The dashboard opens on your smallest screen that isn't the main one.
-5. **Match the reset key.** Open the `config.json` that was just created and set `reset_key` to the key from step 3, for example `"ctrl+alt+r"` or `"f9"`. It starts as `"ctrl+v"`.
-6. **Tap the small screen once** to make the dashboard fill it.
+2. **Set a reset key in RivaTuner.** In RivaTuner → Setup → Plugins, enable HotkeyHandler and set a key for **Begin recording**. Pressing it again later resets Min, Max and 1% low.
+3. **Match the reset key.** Open `config.json` next to the app and set `reset_key` to the same key, for example `"ctrl+alt+r"` or `"f9"`. It starts as `"ctrl+v"`.
+4. **Optional:** right-click the tray icon and tick **Start with Windows**.
 
-To have it start when you sign in, double-click `Start With Windows.bat`.
+### Run from source instead
+
+If you'd rather not run an .exe, you can run the code directly. Install [Python](https://www.python.org/downloads/) 3.10 or newer (or run `winget install Python.Python.3.13`), download this repository (Code → Download ZIP), extract it, and double-click `Start Dashboard.bat`. The first start installs the add-ons listed in `requirements.txt`, which takes about a minute and only happens once.
 
 ## Using it
 
 - **Pages:** swipe left and right, or tap the dots at the bottom, to move between Stats, Music, and Sound and mic.
-- **Tray icon:** next to Afterburner's icon. Right-click it for Show dashboard, Reset stats and Stop dashboard.
-- **Stopping:** use the tray icon or `Stop Dashboard.bat`.
-- **Checking what it can see:** `Check Setup.bat` lists every reading it finds, plus your screens, the add-ons and your recent Steam games.
+- **Tray icon:** next to Afterburner's icon. Right-click it for Show dashboard, Reset stats, Start with Windows, Check setup and Stop dashboard.
+- **Check setup:** opens a report in Notepad listing every reading the dashboard can see, plus your screens, the add-ons and your recent Steam games. Useful when something's missing.
 
 ## Custom backgrounds
 
@@ -73,12 +80,12 @@ A picture in this folder takes priority over the Steam artwork. Wide images look
 
 ## Settings
 
-`config.json` is created the first time you start the dashboard. Restart the dashboard after changing it.
+`config.json` is created next to the app the first time it starts. Restart the dashboard after changing it.
 
 | Setting | What it does |
 | --- | --- |
 | `reset_key` | The key the Reset button presses. Must match RivaTuner's Begin recording key, e.g. `"ctrl+alt+r"`, `"f9"`. |
-| `screen` | `"auto"` picks your smallest non-main screen. Use `1`, `2`, `3`... to choose one; Check Setup shows the numbers. |
+| `screen` | `"auto"` picks your smallest non-main screen. Use `1`, `2`, `3`... to choose one; Check setup shows the numbers. |
 | `temp_warm`, `temp_hot` | Temperatures (°C) where readings turn amber, then pulse. Defaults: 75 and 87. |
 | `recent_games` | How many recently played Steam games to show when idle. `0` hides them. |
 | `game_names` | Rename games, e.g. `{"witcher3.exe": "The Witcher 3"}`. |
@@ -98,7 +105,19 @@ A picture in this folder takes priority over the Steam artwork. Wide images look
 - **It opened on the wrong screen:** set `screen` in `config.json`.
 - **Your RivaTuner overlay shows on the dashboard:** in RivaTuner, add a profile for `msedge.exe` and turn its on-screen display off.
 - **A game pauses when you tap the screen:** Windows gives focus to whatever you touch. The dashboard hands focus straight back, but some games, such as The Witcher 3, still open their pause menu when they lose focus for a moment. Borderless windowed mode makes this less disruptive than exclusive fullscreen.
-- **Music or sound says it needs the add-on:** run `Start Dashboard.bat` again while connected to the internet.
+- **Music or sound isn't working (source version):** run `Start Dashboard.bat` again while connected to the internet so it can install the add-ons.
+
+## Is the download safe?
+
+Every release zip is built by GitHub from this repository's public code, using the [build workflow](.github/workflows/release.yml). Nothing is built on anyone's own PC. Before publishing, the build also starts the app once to check every part loads.
+
+Each zip comes with a signed record proving where it was built. To check a download yourself, install the [GitHub CLI](https://cli.github.com/) and run:
+
+```
+gh attestation verify PC-Stats-Dashboard-v1.0.0.zip --owner Abdul-Hadi-1
+```
+
+Use the name of the zip you downloaded. Only download the app from this repository's Releases page.
 
 ## How it works
 
@@ -107,28 +126,32 @@ A picture in this folder takes priority over the Steam artwork. Wide images look
 - **Names and artwork:** these come from Steam's own files on your PC, falling back to Steam's image servers.
 - **Music, sound and mic:** these use Windows' media controls and audio settings, via [pywinrt](https://github.com/pywinrt/pywinrt) and [pycaw](https://github.com/AndreMiras/pycaw). The tray icon uses [pystray](https://github.com/moses-palmer/pystray).
 - **Showing the page:** the dashboard is a local web page served on `127.0.0.1` and shown in a stripped-down Edge window. It only answers requests from your own PC, and its buttons can't be triggered by websites.
+- **The .exe:** the app is packaged with [PyInstaller](https://pyinstaller.org/), which bundles Python and the add-ons so nothing needs installing.
 
 ## Privacy
 
 No stats are saved anywhere. The app only writes `config.json`, and Edge keeps a small separate profile for the dashboard window in `%LOCALAPPDATA%\PC-Stats-Dashboard`. Session summaries, music info and FPS history live in memory and disappear when it closes.
 
-The only internet use is the one-time add-on install and Steam artwork downloads. You can turn the artwork downloads off with `download_steam_art`.
+The only internet use is Steam artwork downloads, plus the one-time add-on install if you run from source. You can turn the artwork downloads off with `download_steam_art`.
 
 ## Files
 
 | File | What it is |
 | --- | --- |
-| `Start Dashboard.bat` | Starts the dashboard, and installs the add-ons the first time. |
-| `Stop Dashboard.bat` | Stops it. |
-| `Check Setup.bat` | Lists everything the dashboard can see. |
-| `Start With Windows.bat` | Makes it start when you sign in. |
 | `dashboard.py` | The main app: reads the sensors, finds the game, runs the local page and manages the window. |
 | `dash_media.py` | Now playing and music controls. |
 | `dash_audio.py` | Volume, sound output and microphone mute. |
 | `dash_steam.py` | Recently played Steam games. |
-| `dash_tray.py` | The tray icon. |
+| `dash_tray.py` | The tray icon and its menu. |
 | `web/index.html` | The dashboard page itself. |
 | `backgrounds/` | Your own background images (see Custom backgrounds). |
+| `requirements.txt` | The add-ons the source version installs. |
+| `assets/icon.ico` | The app icon. |
+| `.github/workflows/release.yml` | How GitHub builds the .exe for each release. |
+| `Start Dashboard.bat` | Source version: starts the dashboard, and installs the add-ons the first time. |
+| `Stop Dashboard.bat` | Source version: stops it. |
+| `Check Setup.bat` | Source version: lists everything the dashboard can see. |
+| `Start With Windows.bat` | Source version: makes it start when you sign in. |
 
 ## License
 

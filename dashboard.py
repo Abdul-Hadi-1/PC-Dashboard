@@ -26,8 +26,11 @@ import argparse
 import copy
 import ctypes
 import hashlib
+import contextlib
+import io
 import json
 import math
+import tempfile
 import ntpath  # Windows path rules, regardless of where this runs
 import os
 import random
@@ -42,7 +45,11 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-APP_DIR = Path(__file__).resolve().parent
+# Packaged as an .exe, your settings and backgrounds live next to the .exe and the
+# dashboard page is bundled inside it. Run from source, everything is in this folder.
+FROZEN = bool(getattr(sys, "frozen", False))
+APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
+RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
@@ -64,7 +71,7 @@ try:
 except Exception:
     dash_steam = None
 
-WEB_DIR = APP_DIR / "web"
+WEB_DIR = RES_DIR / "web"
 BG_DIR = APP_DIR / "backgrounds"
 CONFIG_PATH = APP_DIR / "config.json"
 IS_WIN = sys.platform == "win32"
@@ -1082,6 +1089,68 @@ def demo_snapshot(s):
 # --------------------------------------------------------------------------
 # Local web server
 # --------------------------------------------------------------------------
+# ---- Start with Windows (tray menu) ------------------------------------------
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "PC Stats Dashboard"
+
+
+def startup_shortcut():
+    """The shortcut 'Start With Windows.bat' makes (source version)."""
+    return Path(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu",
+                "Programs", "Startup", "PC Stats Dashboard.lnk")
+
+
+def launch_command():
+    if FROZEN:
+        return f'"{sys.executable}"'
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    return f'"{pyw if pyw.exists() else exe}" "{Path(__file__).resolve()}"'
+
+
+def startup_enabled():
+    if not IS_WIN:
+        return False
+    return startup_shortcut().exists() or \
+        reg_value(winreg.HKEY_CURRENT_USER, RUN_KEY, RUN_NAME) is not None
+
+
+def set_startup(on):
+    if not IS_WIN:
+        return
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            if on:
+                winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, launch_command())
+            else:
+                try:
+                    winreg.DeleteValue(key, RUN_NAME)
+                except FileNotFoundError:
+                    pass
+    except OSError:
+        pass
+    if not on:
+        try:
+            startup_shortcut().unlink()
+        except OSError:
+            pass
+
+
+def check_setup_report(cfg, sampler=None):
+    """Write what the dashboard can see to a text file and open it in Notepad."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            diagnose(cfg, sampler)
+        except Exception as exc:
+            print(f"\nThe check stopped early: {exc}")
+    path = Path(tempfile.gettempdir(), "PC Stats Dashboard - setup check.txt")
+    path.write_text(buf.getvalue(), encoding="utf-8")
+    if IS_WIN:
+        os.startfile(str(path))
+    return path
+
+
 class Actions:
     """What the dashboard's buttons and the tray menu do."""
 
@@ -1134,6 +1203,10 @@ class Actions:
         if self.sampler.demo:
             return True
         return press_keys(self.cfg.get("reset_key", "ctrl+v"))
+
+    def check_setup(self):
+        threading.Thread(target=check_setup_report, args=(self.cfg, self.sampler),
+                         daemon=True).start()
 
     def show(self):
         hwnd = find_dashboard_window()
@@ -1550,7 +1623,7 @@ def press_keys(combo):
 # --------------------------------------------------------------------------
 # Diagnose
 # --------------------------------------------------------------------------
-def diagnose(cfg):
+def diagnose(cfg, sampler=None):
     print("PC Stats Dashboard - what it can see\n")
     ab_raw = read_afterburner()
     if not ab_raw:
@@ -1606,19 +1679,24 @@ def diagnose(cfg):
             print(f"    {label}: file missing")
         elif mod.AVAILABLE:
             print(f"    {label}: OK")
+        elif FROZEN:
+            print(f"    {label}: couldn't load ({mod.IMPORT_ERROR})")
         else:
             print(f"    {label}: not installed - run Start Dashboard once to install it "
                   f"({mod.IMPORT_ERROR})")
+    running = sampler is not None
     if dash_media is not None and dash_media.AVAILABLE:
-        m = dash_media.Media()
-        time.sleep(2.5)
+        m = sampler.media if running and sampler.media else dash_media.Media()
+        if not running:
+            time.sleep(2.5)
         snap = m.snapshot()
         playing = snap.get("title")
         print("    Now playing: " + (f"{playing} - {snap.get('artist')} ({snap.get('app')})"
                                      if playing else f"nothing{' (' + m.error + ')' if m.error else ''}"))
     if dash_audio is not None and dash_audio.AVAILABLE:
-        a = dash_audio.Audio()
-        time.sleep(1.5)
+        a = sampler.audio if running and sampler.audio else dash_audio.Audio()
+        if not running:
+            time.sleep(1.5)
         snap = a.snapshot()
         outs = ", ".join(o["name"] + (" [on]" if o.get("active") else "") for o in snap.get("outputs", []))
         print(f"    Volume: {snap.get('volume')}%  Outputs: {outs or '-'}  "
@@ -1631,6 +1709,33 @@ def diagnose(cfg):
         print("    Recent Steam games: " + (", ".join(i["name"] for i in r.items) or "none found"))
     keys = parse_combo(cfg.get("reset_key", "ctrl+v"))
     print(f"\nReset button presses: {cfg.get('reset_key')}" + ("" if keys else "  (not understood - check config.json)"))
+    print(f"Starts with Windows: {'yes' if startup_enabled() else 'no'}")
+    print(f"Settings file: {CONFIG_PATH}")
+
+
+def self_test(report_path):
+    """Used by the GitHub build: confirm the packaged app has all its parts.
+    Writes nothing next to the app (no config.json), only the report file."""
+    lines, ok = [], True
+    for label, mod in (("Music", dash_media), ("Sound and mic", dash_audio),
+                       ("Tray icon", dash_tray), ("Steam games", dash_steam)):
+        good = mod is not None and getattr(mod, "AVAILABLE", True)
+        ok = ok and good
+        why = "" if good else f" - {getattr(mod, 'IMPORT_ERROR', 'file missing')}"
+        lines.append(f"{label}: {'ok' if good else 'FAILED'}{why}")
+    page = (WEB_DIR / "index.html").is_file()
+    ok = ok and page
+    lines.append(f"Dashboard page: {'ok' if page else 'MISSING'} ({WEB_DIR})")
+    if dash_tray is not None and dash_tray.AVAILABLE:
+        try:
+            dash_tray.icon_image(64)
+            lines.append("Tray icon image: ok")
+        except Exception as exc:
+            ok = False
+            lines.append(f"Tray icon image: FAILED - {exc}")
+    lines.append("RESULT: " + ("PASSED" if ok else "FAILED"))
+    Path(report_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return 0 if ok else 1
 
 
 # --------------------------------------------------------------------------
@@ -1641,13 +1746,21 @@ def main():
     ap.add_argument("--diagnose", action="store_true", help="print what the app can see")
     ap.add_argument("--no-browser", action="store_true", help="don't open the dashboard window")
     ap.add_argument("--port", type=int, help="override the port")
+    ap.add_argument("--self-test", metavar="FILE",
+                    help="check every part loads, write the result to FILE and exit")
     args = ap.parse_args()
+
+    if args.self_test:
+        sys.exit(self_test(args.self_test))
 
     cfg = load_config()
     if args.port:
         cfg["port"] = args.port
     if args.diagnose:
-        diagnose(cfg)
+        if FROZEN:
+            check_setup_report(cfg)  # the .exe has no console window, so open the report
+        else:
+            diagnose(cfg)
         return
 
     url = f"http://127.0.0.1:{cfg['port']}/"
@@ -1689,7 +1802,9 @@ def main():
     if not args.no_browser:
         threading.Timer(0.3, open_dashboard, args=(cfg, url)).start()
         if IS_WIN and dash_tray is not None:
-            actions.tray = dash_tray.start(actions.show, actions.reset, actions.quit)
+            actions.tray = dash_tray.start(
+                on_show=actions.show, on_reset=actions.reset, on_quit=actions.quit,
+                on_check=actions.check_setup, startup_get=startup_enabled, startup_set=set_startup)
 
     limit = cfg.get("exit_when_closed_s", 120)
     if limit and not args.no_browser and actions.tray is None:

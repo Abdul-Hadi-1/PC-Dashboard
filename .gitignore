@@ -11,3 +11,8 @@ backgrounds/*
 
 # Preview image used for testing
 demo_background.jpg
+
+# Local test builds (GitHub builds the real ones)
+build/
+dist/
+*.spec

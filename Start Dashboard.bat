@@ -10,7 +10,7 @@ rem Music, sound and tray support need a few free add-ons. Installed once, then 
 %PY% -c "import winrt.windows.media.control, winrt.windows.storage.streams, pycaw.pycaw, pystray, PIL" >nul 2>nul
 if errorlevel 1 (
   echo Setting up music, sound and tray support. This only happens once...
-  %PY% -m pip install --user --disable-pip-version-check --quiet winrt-runtime winrt-Windows.Foundation winrt-Windows.Foundation.Collections winrt-Windows.Media winrt-Windows.Media.Control winrt-Windows.Storage winrt-Windows.Storage.Streams pycaw comtypes pystray Pillow
+  %PY% -m pip install --user --disable-pip-version-check --quiet -r "%~dp0requirements.txt"
   if errorlevel 1 (
     echo.
     echo The add-ons couldn't be installed, so music, sound and the tray icon

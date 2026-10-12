@@ -130,6 +130,12 @@ The only internet use is the one-time add-on install and Steam artwork downloads
 | `web/index.html` | The dashboard page itself. |
 | `backgrounds/` | Your own background images (see Custom backgrounds). |
 
+## License
+
+PC Stats Dashboard is free to use and to share unchanged, for non-commercial purposes, under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/). You can't sell it or share modified versions. See [LICENSE](LICENSE).
+
+Only download it from this repository. Copies from anywhere else may have been changed.
+
 ---
 
 Not affiliated with MSI, Guru3D, NVIDIA, AMD, Valve or Microsoft. All product names belong to their owners.

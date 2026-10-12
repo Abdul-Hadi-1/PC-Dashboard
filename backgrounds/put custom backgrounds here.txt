@@ -1,0 +1,6 @@
+Steam games get their artwork automatically.
+
+For any other game, drop an image in this folder named after the game's .exe file.
+For example, for The Witcher 3 (witcher3.exe) use:  witcher3.jpg
+
+Wide images (around 1920x620 or 16:9) look best. JPG, PNG and WEBP all work.
